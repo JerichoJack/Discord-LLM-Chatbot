@@ -161,6 +161,7 @@ nano config.ini
 `llm = `:
  - `openai` - use OpenAI's API for LLM ($ Fast))
  - `llama` - use a local LLaMA (GGML) model (Free, requires llama installation and is slower)
+ - `ollama` - use local or network ollama model (Free, requires ollama installation and speed is dependant on own hardware)
 
 `blip_enabled =`
  - true - the bot will recognize images and respond to them (requires BLIP, installed from update.py)

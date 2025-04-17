@@ -1,106 +1,77 @@
 import asyncio
 import json
-import logging
+from llmchat.logger import logger
 import random
 import websockets
+from llmchat.config import Config
 
 class VTubeStudioClient:
-    def __init__(self, config):
-        self.enabled = config.getboolean("VTubeStudio", "enabled", fallback=False)
-        if not self.enabled:
-            return
-
-        self.host = config.get("VTubeStudio", "host", fallback="127.0.0.1")
-        self.port = config.getint("VTubeStudio", "port", fallback=8001)
-        self.uri = f"ws://{self.host}:{self.port}"
-
-        self.reconnect_interval = config.getint("VTubeStudio", "reconnect_interval", fallback=5)
-        self.idle_emotes = config.get("VTubeStudio", "idle_emotes", fallback="").split(",")
-        self.thinking_emote = config.get("VTubeStudio", "thinking_emote", fallback=None)
-        self.speaking_emote = config.get("VTubeStudio", "speaking_emote", fallback=None)
-        self.random_idle_interval = config.getint("VTubeStudio", "random_idle_interval", fallback=30)
-        self.emotion_map = self.parse_emotion_map(config.get("VTubeStudio", "emotion_map", fallback=""))
-
-        self.websocket = None
+    def __init__(self, config: Config):
+        self.config = config
+        self.enabled = config.vtubestudio_enabled
+        self.idle_emotes = config.vtubestudio_idle_emotes
+        self.idle_emote_delay = config.vtubestudio_idle_emote_delay
+        self.emotion_map = config.vtubestudio_emotion_map
+        self.idle_task = None
         self.connected = False
-        self.loop = asyncio.get_event_loop()
-        self.task = None
 
-    def parse_emotion_map(self, raw_map):
-        result = {}
-        for pair in raw_map.split(","):
-            if ":" in pair:
-                emotion, emote = pair.split(":")
-                result[emotion.strip()] = emote.strip()
-        return result
-
-    async def connect(self):
-        while True:
-            try:
-                logging.info("[VTS] Attempting to connect...")
-                async with websockets.connect(self.uri) as ws:
-                    self.websocket = ws
-                    self.connected = True
-                    logging.info("[VTS] Connected to VTube Studio.")
-                    await self.idle_cycle()
-            except Exception as e:
-                logging.warning(f"[VTS] Connection error: {e}. Reconnecting in {self.reconnect_interval}s.")
-                self.connected = False
-                await asyncio.sleep(self.reconnect_interval)
-
-    async def send_emote(self, emote_id):
-        if not self.connected or not self.websocket:
-            return
-        payload = {
-            "apiName": "VTubeStudioPublicAPI",
-            "messageType": "TriggerHotkey",
-            "data": {"hotkeyID": emote_id}
-        }
-        try:
-            await self.websocket.send(json.dumps(payload))
-            logging.info(f"[VTS] Sent emote: {emote_id}")
-        except Exception as e:
-            logging.warning(f"[VTS] Failed to send emote: {e}")
-
-    async def idle_cycle(self):
-        while self.connected:
-            emote = random.choice(self.idle_emotes)
-            await self.send_emote(emote)
-            await asyncio.sleep(self.random_idle_interval)
-
-    async def play_thinking(self):
-        if self.thinking_emote:
-            await self.send_emote(self.thinking_emote)
-
-    async def play_speaking(self):
-        if self.speaking_emote:
-            await self.send_emote(self.speaking_emote)
-
-    async def play_emotion(self, emotion: str):
-        if not self.enabled:
-            return
-        emote_id = self.emotion_mapping.get(emotion.lower())
-        if emote_id:
-            await self.send_emote(emote_id)
-        else:
-            logging.warning(f"No emote mapping for emotion: {emotion}")
-
-    async def idle_emote_loop(self):
-        while True:
-            if not self.enabled:
-                break
-            if not self.idle_mode:
-                await asyncio.sleep(1)
-                continue
-
-            emote = random.choice(self.idle_emotes)
-            await self.send_emote(emote)
-            await asyncio.sleep(random.randint(10, 30))  # Adjust as needed
-
-    def start(self):
+        # Start the idle emote loop if enabled
         if self.enabled:
-            self.task = self.loop.create_task(self.connect())
+            self.config.validate_vtubestudio_config()
+            self.start_idle_loop()
 
-    def stop(self):
-        if self.task:
-            self.task.cancel()
+    async def start_idle_loop(self):
+        """Starts the idle emote loop that triggers random idle emotes or emotion-based emotes."""
+        if not self.idle_emotes:
+            logger.warning("No idle emotes configured. Idle loop will not start.")
+            return
+
+        while self.enabled:
+            if self.connected:  # Ensure we are connected before attempting to send emotes
+                emote = self.get_current_emote()
+                await self.send_emote(emote)
+            await asyncio.sleep(self.idle_emote_delay)  # Wait before triggering the next idle emote
+
+    def get_current_emote(self):
+        """Return the current emote based on message/emotion context or random if no emotion."""
+        current_emote = None
+
+        # Check if there is an emotion to map to
+        if hasattr(self, 'current_emotion') and self.current_emotion:
+            emotion = self.current_emotion
+            if emotion in self.emotion_map:
+                current_emote = self.emotion_map[emotion]
+                logger.info(f"Using emotion emote: {current_emote}")
+            else:
+                logger.info(f"Emotion {emotion} not mapped. Falling back to idle.")
+        
+        # Fallback to a random idle emote if no emotion is set or emotion mapping fails
+        if not current_emote:
+            current_emote = random.choice(self.idle_emotes)
+            logger.info(f"Using random idle emote: {current_emote}")
+
+        return current_emote
+
+    async def send_emote(self, emote_id: str):
+        """Send a specific emote to VTube Studio."""
+        if self.websocket:
+            try:
+                # Assuming you're using a method to send emotes via WebSocket
+                await self.websocket.send(json.dumps({"action": "set_idle_emote", "emote_id": emote_id}))
+                logger.info(f"Triggered emote: {emote_id}")
+            except Exception as e:
+                logger.error(f"Failed to send emote {emote_id}: {e}")
+        else:
+            logger.warning("WebSocket connection is not established.")
+        
+    async def stop_idle_loop(self):
+        """Stops the idle emote loop."""
+        if self.idle_task:
+            self.idle_task.cancel()
+            self.idle_task = None
+            logger.info("Idle loop has been stopped.")
+            
+    def set_current_emotion(self, emotion_label: str):
+        """Set the current emotion to be used in the next idle cycle."""
+        self.current_emotion = emotion_label
+        logger.info(f"Emotion set to: {emotion_label}")

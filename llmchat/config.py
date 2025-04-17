@@ -1,5 +1,5 @@
 import configparser
-
+from llmchat.logger import logger
 
 class Config:
     def __init__(self, path="config.ini"):
@@ -15,6 +15,66 @@ class Config:
             self._config.write(cf)
 
     # all .ini fields
+
+# VTube Studio changes ----------------------------------------------------------------
+    def validate_vtubestudio_config(self):
+        if not self.vtubestudio_enabled:
+            return
+
+        if not self.vtubestudio_idle_emotes:
+            logger.warning("VTubeStudio is enabled but no idle_emotes are configured.")
+
+        if self.vtubestudio_idle_emote_delay <= 0:
+            logger.warning("VTubeStudio idle_emote_delay should be a positive integer.")
+
+        if not self.vtubestudio_emotion_map:
+            logger.warning("VTubeStudio emotion map is empty. No emotional responses will be triggered.")
+
+    # --- VTube Studio Settings ---
+
+    @property
+    def vtubestudio_enabled(self) -> bool:
+        return self._config.getboolean("VTubeStudio", "enabled", fallback=False)
+
+    @vtubestudio_enabled.setter
+    def vtubestudio_enabled(self, value: bool):
+        self._config.set("VTubeStudio", "enabled", str(value))
+        self.save()
+
+    @property
+    def vtubestudio_idle_emotes(self) -> list[str]:
+        emotes = self._config.get("VTubeStudio", "idle_emotes", fallback="")
+        return [e.strip() for e in emotes.split(",") if e.strip()]
+
+    @vtubestudio_idle_emotes.setter
+    def vtubestudio_idle_emotes(self, emotes: list[str]):
+        value = ", ".join(emotes)
+        self._config.set("VTubeStudio", "idle_emotes", value)
+        self.save()
+
+    @property
+    def vtubestudio_idle_emote_delay(self) -> int:
+        return self._config.getint("VTubeStudio", "idle_emote_delay", fallback=30)
+
+    @vtubestudio_idle_emote_delay.setter
+    def vtubestudio_idle_emote_delay(self, seconds: int):
+        self._config.set("VTubeStudio", "idle_emote_delay", str(seconds))
+        self.save()
+
+    @property
+    def vtubestudio_emotion_map(self) -> dict[str, str]:
+        return {
+            key.replace("emotion_", ""): value
+            for key, value in self._config.items("VTubeStudio")
+            if key.startswith("emotion_")
+        }
+# VTube Studio changes ----------------------------------------------------------------
+
+    @vtubestudio_emotion_map.setter
+    def vtubestudio_emotion_map(self, emotion_map: dict[str, str]):
+        for k, v in emotion_map.items():
+            self._config.set("VTubeStudio", f"emotion_{k}", v)
+        self.save()
 
     @property
     def openai_key(self) -> str:

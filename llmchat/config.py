@@ -31,6 +31,14 @@ class Config:
             logger.warning("VTubeStudio emotion map is empty. No emotional responses will be triggered.")
 
     # --- VTube Studio Settings ---
+    @property
+    def vtubestudio_authentication_token(self) -> str | None:
+        return self._config.get("VTubeStudio", "authentication_token", fallback=None)
+
+    @vtubestudio_authentication_token.setter
+    def vtubestudio_authentication_token(self, token: str):
+        self._config.set("VTubeStudio", "authentication_token", token)
+        self.save()
 
     @property
     def vtubestudio_enabled(self) -> bool:

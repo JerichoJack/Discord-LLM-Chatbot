@@ -38,11 +38,7 @@ class DiscordClient(discord.Client):
         self.config = config
         self.vtube_client = VTubeStudioClient(self.config)
         self.idle_mode = True
-        self.idle_emotes = ["idle_1", "idle_2", "idle_3"]
-
-        if self.vtube_client.enabled:
-            self.vtube_client.start()
-            asyncio.create_task(self.idle_emote_loop())
+        self.idle_emotes = ["idle_1"]
 
         if not self.config.can_interact_with_channel_id(-1) and not self.config.discord_active_channels:
             raise Exception(
@@ -153,12 +149,6 @@ class DiscordClient(discord.Client):
 
         if self.config.bot_blip_enabled:
             self.blip = BLIP()
-
-        self.run(
-            self.config.discord_bot_api_key,
-            log_handler=console_handler,
-            log_formatter=color_formatter,
-        )
 
     async def setup_tts(self):
         logger.info(f"TTS: {self.config.bot_tts_service}")

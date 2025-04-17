@@ -12,7 +12,7 @@ from discord.interactions import Interaction
 import openai
 from aiohttp import ClientSession
 from llmchat import ui_extensions
-
+import re
 from llmchat.blip import BLIP
 from llmchat.config import Config
 from llmchat.logger import logger, console_handler, color_formatter
@@ -23,6 +23,7 @@ from llmchat.llm_sources import LLMSource
 from llmchat.tts_sources import TTSSource
 from llmchat.sr_sources import SRSource
 
+from llmchat.modules.vtubestudio_module import VTubeStudioClient
 
 class DiscordClient(discord.Client):
     config: Config
@@ -35,6 +36,13 @@ class DiscordClient(discord.Client):
 
     def __init__(self, config: Config):
         self.config = config
+        self.vtube_client = VTubeStudioClient(self.config)
+        self.idle_mode = True
+        self.idle_emotes = ["idle_1", "idle_2", "idle_3"]
+
+        if self.vtube_client.enabled:
+            self.vtube_client.start()
+            asyncio.create_task(self.idle_emote_loop())
 
         if not self.config.can_interact_with_channel_id(-1) and not self.config.discord_active_channels:
             raise Exception(
@@ -122,6 +130,24 @@ class DiscordClient(discord.Client):
                 name="reload_config",
                 description="Reloads the settings from config.ini.",
                 callback=self.reload_config,
+            )
+        )
+
+# VTube Studio changes
+        self.tree.add_command(
+            app_commands.Command(
+                name="emote",
+                description="Trigger a specific emote by ID.",
+                callback=self.emote,
+            )
+        )
+
+# VTube Studio changes
+        self.tree.add_command(
+            app_commands.Command(
+                name="emotion",
+                description="Trigger an emotion by label.",
+                callback=self.emotion,
             )
         )
 
@@ -220,6 +246,24 @@ class DiscordClient(discord.Client):
             logger.error(f"Error reloading config: {str(e)}")
             followup: discord.WebhookMessage = await ctx.followup.send(content=f"Error reloading config: ```{str(e)}```")
             await followup.delete(delay=5)
+
+# VTube Studio changes
+    async def emote(self, ctx, emote_id: str):
+        """Trigger a specific emote by its ID."""
+        if self.vtube_client.enabled:
+            await self.vtube_client.send_emote(emote_id)
+            await ctx.respond(f"Triggered emote: {emote_id}")
+        else:
+            await ctx.respond("VTube Studio integration is disabled.")
+
+# VTube Studio changes
+    async def emotion(self, ctx, emotion_label: str):
+        """Trigger an emotion by its label."""
+        if self.vtube_client.enabled:
+            await self.vtube_client.play_emotion(emotion_label)
+            await ctx.respond(f"Triggered emotion: {emotion_label}")
+        else:
+            await ctx.respond("VTube Studio integration is disabled.")
 
     async def retry_last_message(self, ctx: Interaction):
         history_item = self.db.last
@@ -536,9 +580,25 @@ class DiscordClient(discord.Client):
             return
 
         self.db.speech(speaker, speech)
+
+        # Play thinking animation
+        await self.vtube_client.play_thinking()
+
         response = await self.llm.generate_response(speaker)
-        await self.store_embedding((self.user.id, response, -1))
-        self.db.speech(self.user, response)
+
+        # Parse emotion tag
+        emotion_match = re.search(r"<emotion>(.*?)</emotion>", response)
+        emotion = emotion_match.group(1).strip().lower() if emotion_match else "neutral"
+
+        # Strip the emotion tag from the message before saying it
+        cleaned_response = re.sub(r"<emotion>.*?</emotion>", "", response, flags=re.DOTALL).strip()
+
+        await self.store_embedding((self.user.id, cleaned_response, -1))
+
+        # Play speaking emote for the emotion
+        await self.vtube_client.play_emotion(emotion)
+
+        self.db.speech(self.user, cleaned_response)
 
         vc.stop()
 
@@ -546,7 +606,7 @@ class DiscordClient(discord.Client):
             self.sink.is_speaking = False
             logger.debug("Stopped speaking.")
 
-        await self.say(response, vc, after=_after_speaking)
+        await self.say(cleaned_response, vc, after=_after_speaking)
 
 #####################################################################################################################################################################################
 #####################################################################################################################################################################################
